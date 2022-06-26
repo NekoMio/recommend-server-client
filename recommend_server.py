@@ -14,7 +14,7 @@ import pickle
 import numpy as np
 from math import e
 from rediscluster import RedisCluster
-
+from pypmml import Model
 
 # def redis_connect(host="bd", port=6379):
 #     pool = redis.ConnectionPool(host=host, port=port, decode_responses=True)
@@ -68,18 +68,18 @@ def get_liking_genre_list(r, userId):
         value = float(value)
         if value > best_rating:
             genre_Id, best_rating = i, value
-    # 
+    #
     liking_genre_list = r.lrange(f"popular_movies_genreId_{genre_Id}", 0, -1)
     # 再求最喜欢的list
     return [int(x) for x in liking_genre_list]
 
 
-def get_model_arams(redis):
-    coefficients = redis.lrange("params_coefficients", 0, -1)
-    coefficients = [float(x) for x in coefficients]
-    coefficients = np.array(coefficients)
-    intercept = float(redis.get("params_intercept"))
-    return coefficients, intercept
+# def get_model_arams(redis):
+#     coefficients = redis.lrange("params_coefficients", 0, -1)
+#     coefficients = [float(x) for x in coefficients]
+#     coefficients = np.array(coefficients)
+#     intercept = float(redis.get("params_intercept"))
+#     return coefficients, intercept
 
 
 def get_features_userId(r, userId):
@@ -124,10 +124,10 @@ def get_userId2movieId(r, userId, movieId):
     return userId_movieId_features
 
 
-def sort_recall_list_by_model(r, userId, recalls, coefficients, intercept):
+def sort_recall_list_by_model(r, userId, recalls, model):
     user_features = get_features_userId(r, userId)
     rating = []
-    coefficients = np.array(coefficients)
+    # coefficients = np.array(coefficients)
     for movieId in recalls:
         movie_features = get_features_movieId(r, userId, movieId)
         user_movie_features = get_userId2movieId(r, userId, movieId)
@@ -148,8 +148,10 @@ def sort_recall_list_by_model(r, userId, recalls, coefficients, intercept):
         features = np.array(features)
         # print(features)
         # 模型计算
-        pred = np.dot(features, coefficients) + intercept
-        rating.append((movieId, e ** (pred) / (1. + e ** (pred))))
+        # pred = np.dot(features, coefficients) + intercept
+        pred = model.predict(features)
+        print(pred)
+        rating.append((movieId, pred[2]))
     rating.sort(key=lambda x: x[1], reverse=True)
     print(rating)
     return [x[0] for x in rating[:10]]
@@ -165,8 +167,9 @@ def get_recommend_list(redis, userId):
     recall_list = list(set(recall_list))  # 去重
     # print(recall_list)
     # 2. 排序
-    coefficients, intercept = get_model_arams(r)
-    recommend_list = sort_recall_list_by_model(r, userId, recall_list, coefficients, intercept)
+    # coefficients, intercept = get_model_arams(r)
+    model = Model.fromString(redis.get("lr_model_pmml"))
+    recommend_list = sort_recall_list_by_model(r, userId, recall_list, model)
     # 发送推荐列表
     print(f"[INFO]userId:{userId}, list:{recommend_list}")
     print([r.get(f"movieId2movieTitle_{x}") for x in recommend_list])
